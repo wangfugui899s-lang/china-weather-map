@@ -508,7 +508,7 @@ function renderStats(){
   } else {
     c1 = {k:'全国最高', v: fmt(best.v), s: best.e.name, cls:'hot'};
     c2 = {k:'全国最低', v: fmt(worst.v), s: worst.e.name, cls:'cold'};
-    c3 = {k:'冬款区（最高&lt;10°）', v: winter + '<small>/ ' + total + ' ' + unit + '</small>'};
+    c3 = {k:'冬款区（' + metricName() + '&lt;10°）', v: winter + '<small>/ ' + total + ' ' + unit + '</small>'};
   }
   var dtxt = delta==null ? '—' : (delta>0?'+':'') + delta.toFixed(1) + (state.layer==='rain'?'mm':'°');
   var dcls = delta==null ? '' : (delta>0?'hot':'cold');
@@ -524,28 +524,47 @@ function renderStats(){
       '<small>' + (hMean==null?'无数据':'去年 '+fmt(hMean)) + '</small></div></div>';
 }
 
+var RAIN_BANDS = [
+  {name:'无雨', tip:'&lt; 0.1mm', color:'#2b3a4f', key:'none'},
+  {name:'小雨', tip:'0.1 – 10mm', color:'#3a8ac6', key:'light'},
+  {name:'中雨', tip:'10 – 25mm', color:'#46b0e6', key:'mid'},
+  {name:'大雨', tip:'≥ 25mm', color:'#a5e6ff', key:'heavy'}
+];
+function rainBandOf(v){
+  if (v < 0.1) return 0;
+  if (v < 10) return 1;
+  if (v < 25) return 2;
+  return 3;
+}
+function metricName(){
+  return state.layer==='max' ? '最高温' : state.layer==='min' ? '最低温'
+       : state.layer==='feels' ? '体感' : '降水';
+}
+
 function renderBands(){
   var card = document.getElementById('bands');
   var title = document.getElementById('bandTitle');
-  if (state.layer==='rain'){
-    card.style.display = 'none';
-    title.style.display = 'none';
-    return;
-  }
-  card.style.display = '';
-  title.style.display = '';
-  title.textContent = state.view==='region' ? '气温带 · 大区分布' : '气温带 · 上货参考';
-
+  var unit = state.view==='region' ? '区' : '省';
+  var isRain = state.layer==='rain';
+  var bands = isRain ? RAIN_BANDS : BANDS;
   var counts = [0,0,0,0];
+  var total = 0;
+
   entities().forEach(function(e){
     var v = entValue(e);
-    if (v!=null) counts[bandOf(v)]++;
+    if (v==null) return;
+    counts[isRain ? rainBandOf(v) : bandOf(v)]++;
+    total++;
   });
-  var total = 0; counts.forEach(function(c){ total += c; });
-  var unit = state.view==='region' ? '区' : '省';
+
+  title.style.display = '';
+  title.textContent = isRain
+    ? '降水带 · 分布'
+    : '气温带 · 上货参考（按' + metricName() + '）';
+
   var h = '';
-  for (var i=0;i<BANDS.length;i++){
-    var b = BANDS[i], c = counts[i];
+  for (var i=0;i<bands.length;i++){
+    var b = bands[i], c = counts[i];
     var pct = total ? (c/total*100) : 0;
     h += '<div class="band"><div class="nm">' + b.name + '</div>' +
          '<div class="bar"><i style="width:' + pct.toFixed(1) + '%;background:' + b.color + '"></i></div>' +
@@ -557,15 +576,24 @@ function renderBands(){
 
 function renderTrend(){
   var n = Math.min(state.span, W[0].days.length);
+  var isRain = state.layer==='rain';
   var winter = [], summer = [], labs = [];
   for (var d=0; d<n; d++){
     var wc=0, sc=0;
     W.forEach(function(p){
       var dd = p.days[d];
-      if (!dd || dd.max==null) return;
-      var b = bandOf(dd.max);
-      if (b===3) wc++;
-      if (b===0) sc++;
+      if (!dd) return;
+      if (isRain){
+        var mm = dd.precip || 0;
+        if (mm >= 0.1) wc++;
+        if (mm >= 10) sc++;
+      } else {
+        var v = dayVal(dd, state.layer);
+        if (v==null) return;
+        var b = bandOf(v);
+        if (b===3) wc++;
+        if (b===0) sc++;
+      }
     });
     winter.push(wc); summer.push(sc);
     labs.push(dayLabel(W[0].days[d].d, d).replace('今天','今').replace('明天','明').replace('后天','后'));
@@ -623,14 +651,17 @@ function renderTrend(){
     return '<text x="' + X(i).toFixed(1) + '" y="' + (hh-6) + '" fill="#7089ab" font-size="8.5" text-anchor="middle">' + l + '</text>';
   }).join('');
 
-  document.getElementById('trendTitle').textContent = '未来 ' + state.span + ' 天 · 冬款与夏款省份数';
+  document.getElementById('trendTitle').textContent = '未来 ' + state.span + ' 天 · ' +
+    (isRain ? '有雨与强降水省份数' : '冬款与夏款省份数（按' + metricName() + '）');
   document.getElementById('trend').innerHTML =
     '<svg viewBox="0 0 ' + w + ' ' + hh + '" style="width:100%;height:auto">' + grid +
       lineOf(winter, '#6b8ff5') + lineOf(summer, '#f0873c') + xl +
     '</svg>' +
     '<div style="display:flex;gap:14px;font-size:11.5px;color:#8fa0bf;margin-top:4px;flex-wrap:wrap">' +
-      '<span><i style="display:inline-block;width:10px;height:3px;background:#6b8ff5;vertical-align:middle"></i> 冬款省份</span>' +
-      '<span><i style="display:inline-block;width:10px;height:3px;background:#f0873c;vertical-align:middle"></i> 夏款省份</span>' +
+      '<span><i style="display:inline-block;width:10px;height:3px;background:#6b8ff5;vertical-align:middle"></i> ' +
+        (isRain ? '有雨省份' : '冬款省份（&lt;10°）') + '</span>' +
+      '<span><i style="display:inline-block;width:10px;height:3px;background:#f0873c;vertical-align:middle"></i> ' +
+        (isRain ? '强降水省份（≥10mm）' : '夏款省份（≥28°）') + '</span>' +
       (split < n-1 ? '<span style="color:#5f7396">虚线为第 8 天之后，只看趋势</span>' : '') +
     '</div>';
 }
